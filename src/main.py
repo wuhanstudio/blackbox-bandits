@@ -9,6 +9,9 @@ import argparse
 import json
 import pdb
 
+import numpy as np
+from torch.utils.data import Subset
+
 CLASSIFIERS = {
     "inception_v3": (models.inception_v3, 299),
     "resnet50": (models.resnet50, 224),
@@ -23,11 +26,11 @@ NUM_CLASSES = {
 # formatted for PyTorch ImageFolder
 # Instructions for how to do this can be found at:
 # https://github.com/facebook/fb.resnet.torch/blob/master/INSTALL.md#download-the-imagenet-dataset
-IMAGENET_PATH = ""
+IMAGENET_PATH = "E:/ImageNet/val"
 if IMAGENET_PATH == "":
     raise ValueError("Please fill out the path to ImageNet")
 
-ch.set_default_tensor_type('torch.cuda.FloatTensor')
+# ch.set_default_tensor_type('torch.cpu.FloatTensor')
 
 def norm(t):
     assert len(t.shape) == 4
@@ -118,7 +121,7 @@ def make_adversarial_examples(image, true_label, args, model_to_fool, IMAGENET_S
 
     # Original classifications
     orig_images = image.clone()
-    orig_classes = model_to_fool(image).argmax(1).cuda()
+    orig_classes = model_to_fool(image).argmax(1)
     correct_classified_mask = (orig_classes == true_label).float()
     total_ims = correct_classified_mask.sum()
     not_dones_mask = correct_classified_mask.clone()
@@ -179,8 +182,8 @@ def make_adversarial_examples(image, true_label, args, model_to_fool, IMAGENET_S
         success_queries = ((success_mask*total_queries).sum()/num_success).cpu().item()
         not_done_loss = ((new_losses*not_dones_mask).sum()/not_dones_mask.sum()).cpu().item()
         max_curr_queries = total_queries.max().cpu().item()
-        if args.log_progress:
-            print("Queries: %d | Success rate: %f | Average queries: %f" % (max_curr_queries, current_success_rate, success_queries))
+        # if args.log_progress:
+        print("Queries: %d | Success rate: %f | Average queries: %f" % (max_curr_queries, current_success_rate, success_queries))
 
         if current_success_rate == 1.0:
             break
@@ -203,12 +206,13 @@ def main(args, model_to_fool, dataset_size):
                         transforms.CenterCrop(dataset_size),
                         transforms.ToTensor(),
                     ]))
+    dataset = Subset(dataset, np.arange(args.total_images))
     dataset_loader = DataLoader(dataset, batch_size=args.batch_size)
     total_correct, total_adv, total_queries = 0, 0, 0
     for i, (images, targets) in enumerate(dataset_loader):
         if i*args.batch_size >= args.total_images:
             break
-        res = make_adversarial_examples(images.cuda(), targets.cuda(), args, model_to_fool, dataset_size)
+        res = make_adversarial_examples(images, targets, args, model_to_fool, dataset_size)
         ncc = res['num_correctly_classified'] # Number of correctly classified images (originally)
         num_adv = ncc * res['success_rate'] # Success rate was calculated as (# adv)/(# correct classified)
         queries = num_adv * res['average_queries'] # Average queries was calculated as (total queries for advs)/(# advs)
@@ -269,7 +273,7 @@ if __name__ == "__main__":
         args_dict = defaults
     
     model_type = CLASSIFIERS[args.classifier][0]
-    model_to_fool = model_type(pretrained=True).cuda()
+    model_to_fool = model_type(pretrained=True)
     model_to_fool = DataParallel(model_to_fool)
     model_to_fool.eval()
 
